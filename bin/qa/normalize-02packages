@@ -1,0 +1,37 @@
+#!/usr/bin/env perl
+use 5.020;
+use strict;
+use warnings;
+use utf8;
+use open qw< :std :encoding(UTF-8) >;
+use version;
+
+while (<>) {
+    # Skip the header
+    print, next if 1 .. 9;
+
+    # Transform the data lines
+    my ($module, $version, $archive) = split ' ', $_, 3;
+    print join "\t",
+        $module,
+        numify_version($version),
+        $archive;
+}
+
+sub numify_version {
+    my $version = shift;
+
+    # undef → 0
+    $version = 0 if $version eq "undef";
+
+    # Strip underscores, so version->parse doesn't barf.  These generally don't
+    # make it into 02packages since underscores indicate a trial release, but
+    # they can when the release itself is not a trial release but the module
+    # version contains an underscore.
+    $version =~ s/_//g;
+
+    # numify
+    $version = version->parse($version)->numify;
+
+    return sprintf "%.12f", $version;
+}

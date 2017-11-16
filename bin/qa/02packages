@@ -1,0 +1,90 @@
+#!/usr/bin/env perl
+use 5.020;
+use utf8;
+use open qw< :std :encoding(UTF-8) >;
+use strict;
+use warnings;
+use experimental qw< postderef >;
+
+use MetaCPAN::Client;
+use List::UtilsBy qw< uniq_by >;
+
+my $n         = 0;
+my $page_size = 5000;
+my @lines;
+
+my $metacpan = MetaCPAN::Client->new;
+my $files    = $metacpan->all(
+    "files",
+    {
+        # This filter is based on the "find" method in
+        # MetaCPAN::Document::File::Set.
+        es_filter => {
+            and => [
+                # The _file_ must be indexed (i.e. not an ignored file),
+                # authorized, and marked "latest"…
+                { term => { indexed    => 1 } },
+                { term => { authorized => 1 } },
+                { term => { status     => 'latest' } },
+
+                # …and have at least one _module_ which is also indexed and
+                # authorized.
+                {
+                    nested => {
+                        path   => "module",
+                        filter => {
+                            and => [
+                                { term => { "module.indexed"    => 1 } },
+                                { term => { "module.authorized" => 1 } },
+                            ]
+                        }
+                    }
+                },
+            ],
+        },
+        # Only about 5m is necessary on the ServerCentral internet connection,
+        # but it varies.  Use way more time than we need to be safe.
+        scroller_time => '10m',
+        scroller_size => $page_size,
+    }
+);
+
+warn "Starting scroll over \"latest\" files…\n";
+
+while (my $file = $files->next) {
+    warn "Screened $n files\n"
+        if $n++ and $n % $page_size == 0;
+
+    # This should be guaranteed by the ES query, but just in case, it doesn't
+    # hurt to repeat it here.
+    next unless $file->indexed
+            and $file->authorized
+            and $file->status eq 'latest';
+
+    my $archive = $file->download_url =~ s{.*/authors/id/}{}r;
+    my $modules = $file->module
+        or next;
+
+    for my $module ($modules->@*) {
+        next unless $module->{indexed} and $module->{authorized};
+        push @lines, join "\t",
+            $module->{name},
+            sprintf("%.12f", $module->{version_numified} // 0),
+            $archive;
+    }
+}
+
+# This mimics the header that PAUSE adds.
+say <<HEADER;
+File:         02packages.details.txt
+URL:          http://www.perl.com/CPAN/modules/02packages.details.txt
+Description:  Package names found in MetaCPAN
+Columns:      package name, version, path
+Intended-For: Automated fetch routines, namespace documentation.
+Written-By:   @{[__FILE__]}
+Line-Count:   @{[scalar @lines]}
+Last-Updated: @{[scalar localtime]}
+HEADER
+
+# This is the sort PAUSE uses in PAUSE::mldistwatch line 635.
+say for uniq_by { $_ } sort { lc $a cmp lc $b } @lines;
