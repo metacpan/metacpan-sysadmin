@@ -1,0 +1,21 @@
+#!/bin/bash
+set -e -o pipefail
+
+bin=$(dirname $0)
+pause=02packages.pause.txt
+metacpan=02packages.metacpan.txt
+
+if [[ ! -s $pause ]]; then
+    echo Downloading 02packages from PAUSE… >&2
+    curl -fsSL https://cpan.metacpan.org/modules/02packages.details.txt.gz \
+        | gunzip -c \
+        | $bin/normalize-02packages \
+        > $pause
+fi
+
+if [[ ! -s $metacpan ]]; then
+    echo Generating 02packages from MetaCPAN… >&2
+    $bin/02packages > 02packages.metacpan.txt
+fi
+
+git diff --no-index --color-words $pause $metacpan
